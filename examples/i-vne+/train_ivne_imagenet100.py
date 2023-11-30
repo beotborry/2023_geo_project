@@ -19,7 +19,7 @@ parser.add_argument('--cache_name', default='I_VNE_ImageNet_100', type=str, meta
 parser.add_argument('--cache_path', default='./cache', type=str, metavar='DIR', help='path to cache directory')
 parser.add_argument('--gpu_num', default='0', type=str, metavar='N', help='gpu_num')
 parser.add_argument('--datadir', default='./data/imagenet', type=str, metavar='DIR', help='path to data directory')
-parser.add_argument('--subclass_file', default='./subclass_imgnet100.csv', type=str, metavar='FILE', help='subclass_file')
+parser.add_argument('--subclass_file', default='./subclass_imgnet10.csv', type=str, metavar='FILE', help='subclass_file')
 parser.add_argument('--num_workers', default=16, type=int, metavar='N', help='number of data loader workers')
 
 parser.add_argument('--weight_decay', default=1.0e-4, type=float, metavar='W', help='weight decay') # checked!

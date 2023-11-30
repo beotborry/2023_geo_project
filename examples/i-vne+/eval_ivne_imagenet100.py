@@ -19,7 +19,7 @@ parser.add_argument('--batch_size', default=256, type=int, metavar='N', help='mi
 parser.add_argument('--learning_rate', default=0.3, type=float, metavar='LR', help='learning_rate')
 parser.add_argument('--momentum', default=0.995, type=float, metavar='MMT', help='momentum')
 parser.add_argument('--weight_decay', default=0.000001, type=float, metavar='W', help='weight decay')
-parser.add_argument('--subclass_file', default='./subclass_imgnet100.csv', type=str, metavar='FILE', help='subclass_file')
+parser.add_argument('--subclass_file', default='./subclass_imgnet10.csv', type=str, metavar='FILE', help='subclass_file')
 parser.add_argument('--datadir', default='./data/imagenet', type=str, metavar='DIR', help='path to checkpoint directory')
 parser.add_argument('--cache_name', default='I_VNE_ImageNet_100', type=str, metavar='DIR', help='cache_name')
 parser.add_argument('--cache_path', default='./cache/', type=str, metavar='DIR', help='path to cache directory')
