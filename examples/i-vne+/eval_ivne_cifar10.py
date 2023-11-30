@@ -10,6 +10,7 @@ import glob
 import numpy as np
 import wandb
 from PIL import ImageOps, Image
+from utils import set_seed
 
 
 parser = argparse.ArgumentParser(description='I_VNE linear evaluation')
@@ -25,6 +26,7 @@ parser.add_argument('--datadir', default='./data/imagenet', type=str, metavar='D
 parser.add_argument('--cache_name', default='I_VNE_ImageNet_100', type=str, metavar='DIR', help='cache_name')
 parser.add_argument('--cache_path', default='./cache/', type=str, metavar='DIR', help='path to cache directory')
 parser.add_argument('--gpu_num', default='0', type=str, metavar='N', help='gpu_num')
+parser.add_argument('--seed', default=0, type=int, metavar='N', help='seed for initializing training. ')
 
 
 ##########
@@ -216,7 +218,8 @@ if __name__ == '__main__':
     args.env_info = '{0}:{1}'.format(os.uname().nodename, args.gpu_num)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_num
-    torch.backends.cudnn.benchmark = True
+    # torch.backends.cudnn.benchmark = True
+    set_seed(args.seed)
     wandb.init(project='GeoProejct', entity='beotborry', name=args.cache_name, config=args)
 
     lin_eval_I_VNE(args)

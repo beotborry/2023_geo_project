@@ -12,7 +12,7 @@ import cv2
 import argparse
 import glob
 import wandb
-
+from utils import set_seed
 
 
 
@@ -35,6 +35,7 @@ parser.add_argument('--base_learning_rate', default=0.40, type=float, metavar='L
 parser.add_argument('--header_size', default=128, type=int, metavar='N', help='header_size')
 parser.add_argument('--extra_views', default=4, type=int, metavar='N', help='extra_views') # total_views = 2 + extra_views
 parser.add_argument('--reg_type', choices=['frobenius', 'vne', 'geodesic'], default='vne', type=str, help='reg_type')
+parser.add_argument('--seed', default=0, type=int, metavar='N', help='seed')
 
 # Try not to stop and resume from checkpoint.
 parser.add_argument('--from_checkpoint', dest='from_checkpoint', action='store_true')
@@ -430,7 +431,8 @@ if __name__ == '__main__':
     env_info = '{0}:{1}'.format(os.uname().nodename, args.gpu_num)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_num
-    torch.backends.cudnn.benchmark = True
+    # torch.backends.cudnn.benchmark = True
+    set_seed(args.seed)
     wandb.init(project='GeoProejct', entity='beotborry', name=args.cache_name, config=args)
     train_I_VNE(args)
 
