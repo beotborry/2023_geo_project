@@ -339,10 +339,8 @@ def train_I_VNE(args):
 
             loss_list.append(loss.item())
             cossim_list.append(avg_cossim.item())
-            if args.reg_type == 'vne':
-                entropy_list.append(avg_entropy.item())
-            elif args.reg_type == 'geodesic':
-                geodesic_list.append(avg_geodesic.item())
+            entropy_list.append(avg_entropy.item())
+            geodesic_list.append(avg_geodesic.item())
 
         toc = time.time()
         print('Elapsed: {0:.1f}, Next: {1}, Finish: {2}'.format(toc-tic, (datetime.datetime.now() + datetime.timedelta(seconds=(toc-tic))).strftime("%Y%m%d %H:%M"),\
