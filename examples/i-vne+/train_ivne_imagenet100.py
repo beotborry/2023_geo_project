@@ -10,7 +10,8 @@ from PIL import ImageOps, Image
 import cv2
 import argparse
 import glob
-
+import wandb
+from utils import set_seed
 
 parser = argparse.ArgumentParser(description='I_VNE training')
 
@@ -31,32 +32,11 @@ parser.add_argument('--base_learning_rate', default=0.40, type=float, metavar='L
 parser.add_argument('--header_size', default=256, type=int, metavar='N', help='header_size')
 parser.add_argument('--extra_views', default=4, type=int, metavar='N', help='extra_views') # total_views = 2 + extra_views
 parser.add_argument('--reg_type', choices=['frobenius', 'vne', 'geodesic'], default='vne', type=str, help='reg_type')
+parser.add_argument('--seed', default=0, type=int, metavar='N', help='seed for initializing training. ')
 
 # Try not to stop and resume from checkpoint.
 parser.add_argument('--from_checkpoint', dest='from_checkpoint', action='store_true')
 ##################################################
-
-
-# class CIFAR10(torch.utils.data.Dataset):
-#     def __init__(self, root, transform=None):
-#         super(CIFAR10, self).__init__()
-
-#         self.transform = transform
-#         self.imgs = []
-
-    
-#     def __len__(self):
-#         return len(self.imgs)
-
-#     def __getitem__(self, index):
-#         filename, target_idx = self.imgs[index]
-#         with open(filename, 'rb') as f:
-#             img = Image.open(f).convert('RGB')
-
-#         if self.transform is not None:
-#             img = self.transform(img)
-
-#         return img, target_idx
 
 
 class Imgnet_subclass(torch.utils.data.Dataset):
@@ -216,8 +196,7 @@ def train_I_VNE(args):
 
     transform_list = [transform_large1,transform_large2] + [transform_small1,transform_small2] * int(args.extra_views/2.)
     args.extra_views = len(transform_list) - 2
-    # dataset_train = Imgnet_subclass(args.datadir + '/train', args.subclass_file, transform=MultiTransform(transform_list))
-    dataset_train = torchvision.datasets.CIFAR10(args.datadir, train=True, transform=MultiTransform(transform_list), download=True)
+    dataset_train = Imgnet_subclass(args.datadir + '/train', args.subclass_file, transform=MultiTransform(transform_list))
     print('dataset_train: {0}'.format(len(dataset_train)))
     loader_train = torch.utils.data.DataLoader(dataset_train, shuffle=True, pin_memory=True, batch_size=args.batch_size, num_workers=args.num_workers, drop_last=True)
 
@@ -375,6 +354,11 @@ def train_I_VNE(args):
 
         torch.save({'epoch':epoch, 'model': model.module.state_dict(), 'projector': projector.module.state_dict(), 'optimizer_with_wd': optimizer_with_wd.state_dict(), 'optimizer_without_wd': optimizer_without_wd.state_dict(), 'args': args}, cache_file_name + '.tmp')
         os.rename(cache_file_name + '.tmp', cache_file_name)
+        
+        wandb.log({'epoch': epoch, 'loss': np.mean(loss_list), 'cossim': np.mean(cossim_list), 'entropy': np.mean(entropy_list), 'geodesic': np.mean(geodesic_list),
+                   'lr': optimizer_with_wd.state_dict()['param_groups'][0]['lr'], 'wd': args.weight_decay}, step=epoch)
+        wandb.log({'proj_time': np.mean(proj_time_list), 'cossim_time': np.mean(cossim_time_list), 'entropy_time': np.mean(entropy_time_list), 'geodesic_time': np.mean(geodesic_time_list)}, step=epoch)
+        wandb.save(cache_file_name)
 
 
     print('\nDone.')
@@ -390,8 +374,9 @@ if __name__ == '__main__':
     env_info = '{0}:{1}'.format(os.uname().nodename, args.gpu_num)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_num
-    torch.backends.cudnn.benchmark = True
-
+    # torch.backends.cudnn.benchmark = True
+    set_seed(args.seed)
+    wandb.init(project='GeoProejct', entity='beotborry', name=args.cache_name, config=args)
     train_I_VNE(args)
 
 

@@ -13,7 +13,9 @@ import argparse
 import glob
 import wandb
 from utils import set_seed
-
+from view_gernerator import ContrastiveLearningViewGenerator
+from torchvision import transforms
+from gaussian_blur import GaussianBlur
 
 
 parser = argparse.ArgumentParser(description='I_VNE training')
@@ -188,58 +190,26 @@ def get_frobenius_norm(H1, H2, lambd = 0.0051):
     on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
     off_diag = off_diagonal(c).pow_(2).sum()
     return on_diag + lambd * off_diag
+
+def get_simclr_pipeline_transform(size, s=1):
+    """Return a set of data augmentation transformations as described in the SimCLR paper."""
+    color_jitter = transforms.ColorJitter(0.8 * s, 0.8 * s, 0.8 * s, 0.2 * s)
+    data_transforms = transforms.Compose([transforms.RandomResizedCrop(size=size),
+                                            transforms.RandomHorizontalFlip(),
+                                            transforms.RandomApply([color_jitter], p=0.8),
+                                            transforms.RandomGrayscale(p=0.2),
+                                            GaussianBlur(kernel_size=int(0.1 * size)),
+                                            transforms.ToTensor()])
+    return data_transforms
+
 def train_I_VNE(args):
     print(args)
+    transform = ContrastiveLearningViewGenerator(
+        get_simclr_pipeline_transform(32),
+        n_views=2 + args.extra_views
+    )
 
-    # Use the same augmentation sets in SwAV
-    imagenet_norm = [[0.485, 0.456, 0.406],[0.229, 0.224, 0.225]]
-
-    transform_large1 = torchvision.transforms.Compose([
-        torchvision.transforms.RandomResizedCrop(224, scale=(0.14, 1.0)),
-        torchvision.transforms.RandomHorizontalFlip(p=0.5),
-        torchvision.transforms.RandomApply([torchvision.transforms.ColorJitter(0.4,0.4,0.2,0.1)], p=0.8),
-        torchvision.transforms.RandomGrayscale(p=0.2),
-        GaussianBlur(23),
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.Normalize(*imagenet_norm)
-    ])
-
-    transform_large2 = torchvision.transforms.Compose([
-        torchvision.transforms.RandomResizedCrop(224, scale=(0.14, 1.0)),
-        torchvision.transforms.RandomHorizontalFlip(p=0.5),
-        torchvision.transforms.RandomApply([torchvision.transforms.ColorJitter(0.4,0.4,0.2,0.1)], p=0.8),
-        torchvision.transforms.RandomGrayscale(p=0.2),
-        torchvision.transforms.RandomApply([GaussianBlur(23)], p=0.1),
-        torchvision.transforms.RandomApply([Solarization()], p=0.2),
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.Normalize(*imagenet_norm)
-    ])
-
-    transform_small1 = torchvision.transforms.Compose([
-        torchvision.transforms.RandomResizedCrop(96, scale=(0.05, 0.14)),
-        torchvision.transforms.RandomHorizontalFlip(p=0.5),
-        torchvision.transforms.RandomApply([torchvision.transforms.ColorJitter(0.4,0.4,0.2,0.1)], p=0.8),
-        torchvision.transforms.RandomGrayscale(p=0.2),
-        GaussianBlur(9),
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.Normalize(*imagenet_norm)
-    ])
-
-    transform_small2 = torchvision.transforms.Compose([
-        torchvision.transforms.RandomResizedCrop(96, scale=(0.05, 0.14)),
-        torchvision.transforms.RandomHorizontalFlip(p=0.5),
-        torchvision.transforms.RandomApply([torchvision.transforms.ColorJitter(0.4,0.4,0.2,0.1)], p=0.8),
-        torchvision.transforms.RandomGrayscale(p=0.2),
-        torchvision.transforms.RandomApply([GaussianBlur(9)], p=0.1),
-        torchvision.transforms.RandomApply([Solarization()], p=0.2),
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.Normalize(*imagenet_norm)
-    ])
-
-    transform_list = [transform_large1,transform_large2] + [transform_small1,transform_small2] * int(args.extra_views/2.)
-    args.extra_views = len(transform_list) - 2
-    # dataset_train = Imgnet_subclass(args.datadir + '/train', args.subclass_file, transform=MultiTransform(transform_list))
-    dataset_train = torchvision.datasets.CIFAR10(args.datadir, train=True, transform=MultiTransform(transform_list), download=True)
+    dataset_train = torchvision.datasets.CIFAR10(args.datadir, train=True, transform=transform, download=True)
     print('dataset_train: {0}'.format(len(dataset_train)))
     loader_train = torch.utils.data.DataLoader(dataset_train, shuffle=True, pin_memory=True, batch_size=args.batch_size, num_workers=args.num_workers, drop_last=True)
 
@@ -326,8 +296,8 @@ def train_I_VNE(args):
             tic_proj = time.time()
             if args.extra_views > 0:
                 proj_list = []
-                proj_list.append(projector(model(torch.cat(data[:2]).to('cuda'))))
-                proj_list.append(projector(model(torch.cat(data[2:]).to('cuda'))))
+                proj_list.append(projector(model(torch.cat(data[:2]).to('cuda')))) # base
+                proj_list.append(projector(model(torch.cat(data[2:]).to('cuda')))) # extra view, 4 data
                 projections = torch.cat(proj_list)
             else:
                 projections = projector(model(torch.cat(data).to('cuda')))
@@ -386,7 +356,8 @@ def train_I_VNE(args):
             elif args.reg_type == 'geodesic':
                 loss = -args.alpha_1 * avg_cossim + args.alpha_2 * avg_geodesic
             elif args.reg_type == 'frobenius':
-                loss = -args.alpha_1 * avg_cossim + args.alpha_2 * avg_frobenius
+                # loss = -args.alpha_1 * avg_cossim + args.alpha_2 * avg_frobenius
+                loss = avg_frobenius
 
             loss.backward()
 
