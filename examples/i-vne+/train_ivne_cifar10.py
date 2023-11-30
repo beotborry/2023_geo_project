@@ -7,14 +7,18 @@ import time
 import datetime
 import os
 from PIL import ImageOps, Image
+from tqdm import tqdm
 import cv2
 import argparse
 import glob
+import wandb
+
+
 
 
 parser = argparse.ArgumentParser(description='I_VNE training')
 
-parser.add_argument('--cache_name', default='I_VNE_ImageNet_100', type=str, metavar='DIR', help='cache_name')
+parser.add_argument('--cache_name', default='I_VNE_CIFAR_10', type=str, metavar='DIR', help='cache_name')
 parser.add_argument('--cache_path', default='./cache', type=str, metavar='DIR', help='path to cache directory')
 parser.add_argument('--gpu_num', default='0', type=str, metavar='N', help='gpu_num')
 parser.add_argument('--datadir', default='./data/imagenet', type=str, metavar='DIR', help='path to data directory')
@@ -22,13 +26,13 @@ parser.add_argument('--subclass_file', default='./subclass_imgnet100.csv', type=
 parser.add_argument('--num_workers', default=16, type=int, metavar='N', help='number of data loader workers')
 
 parser.add_argument('--weight_decay', default=1.0e-4, type=float, metavar='W', help='weight decay') # checked!
-parser.add_argument('--epochs', default=800, type=int, metavar='N', help='number of total epochs to run') 
+parser.add_argument('--epochs', default=400, type=int, metavar='N', help='number of total epochs to run') 
 parser.add_argument('--warmup_epochs', default=10, type=int, metavar='N', help='number of epochs to warmup') # checked!
 parser.add_argument('--batch_size', default=64, type=int, metavar='N', help='mini-batch size')
 parser.add_argument('--alpha_1', default=4.16, type=float, metavar='COEF', help='alpha_1') # 4.16 = log(64) = log(batch_size)
 parser.add_argument('--alpha_2', default=1.00, type=float, metavar='COEF', help='alpha_2')
 parser.add_argument('--base_learning_rate', default=0.40, type=float, metavar='LR', help='base learning rate') # checked!
-parser.add_argument('--header_size', default=256, type=int, metavar='N', help='header_size')
+parser.add_argument('--header_size', default=128, type=int, metavar='N', help='header_size')
 parser.add_argument('--extra_views', default=4, type=int, metavar='N', help='extra_views') # total_views = 2 + extra_views
 parser.add_argument('--reg_type', choices=['frobenius', 'vne', 'geodesic'], default='vne', type=str, help='reg_type')
 
@@ -166,6 +170,23 @@ def get_geodesic_distance(H):
     eig_val = sing_val ** 2
     return torch.sqrt((torch.log(eig_val) ** 2).sum())
 
+def get_weighted_geodesic_distance(H, lambd = 0.0051):
+    pass
+
+def off_diagonal(x):
+    # return a flattened view of the off-diagonal elements of a square matrix
+    n, m = x.shape
+    assert n == m
+    return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+
+def get_frobenius_norm(H1, H2, lambd = 0.0051):
+    bn = torch.nn.BatchNorm1d(H1.shape[1], affine=False).cuda()
+    c = bn(H1).T @ bn(H2)
+    c.div_(H1.shape[0])
+
+    on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+    off_diag = off_diagonal(c).pow_(2).sum()
+    return on_diag + lambd * off_diag
 def train_I_VNE(args):
     print(args)
 
@@ -227,9 +248,7 @@ def train_I_VNE(args):
     model.fc = torch.nn.Identity()
 
     projector = torch.nn.Sequential(torch.nn.Linear(in_features=rep_size, out_features=rep_size), torch.nn.BatchNorm1d(rep_size), torch.nn.ReLU(inplace=True), \
-                                    torch.nn.Linear(in_features=rep_size, out_features=rep_size), torch.nn.BatchNorm1d(rep_size), torch.nn.ReLU(inplace=True), \
                                     torch.nn.Linear(in_features=rep_size, out_features=args.header_size), torch.nn.BatchNorm1d(args.header_size))
-
 
     last_epoch = 0
     cache_dict = dict()
@@ -293,11 +312,13 @@ def train_I_VNE(args):
         cossim_list = []
         entropy_list = []
         geodesic_list = []
+        frobenius_list = []
         proj_time_list = []
         cossim_time_list = []
         entropy_time_list = []
         geodesic_time_list = []
-        for data, _ in loader_train:
+        frobenius_time_list = []
+        for data, _ in tqdm(loader_train):
             optimizer_with_wd.zero_grad()
             optimizer_without_wd.zero_grad()
 
@@ -344,10 +365,27 @@ def train_I_VNE(args):
             toc_geodesic = time.time()
             geodesic_time_list.append(toc_geodesic - tic_geodesic)
 
+            tic_frobenius = time.time()
+            frobenius_sum = 0.
+            frobenius_cnt = 0.
+            for xii in range(2):
+                for xjj in range(xii+1,args.extra_views+2):
+                    frobenius_sum += get_frobenius_norm(projections[args.batch_size*xii:args.batch_size*(xii+1)], projections[args.batch_size*xjj:args.batch_size*(xjj+1)])
+                    frobenius_cnt += 1.
+            avg_frobenius = frobenius_sum / frobenius_cnt
+            toc_frobenius = time.time()
+            frobenius_time_list.append(toc_frobenius - tic_frobenius)
+
+            entropy_list.append(avg_entropy.item())
+            geodesic_list.append(avg_geodesic.item())
+            frobenius_list.append(avg_frobenius.item())
+
             if args.reg_type == 'vne':
                 loss = -(args.alpha_1 * avg_cossim + args.alpha_2 * avg_entropy)
             elif args.reg_type == 'geodesic':
                 loss = -args.alpha_1 * avg_cossim + args.alpha_2 * avg_geodesic
+            elif args.reg_type == 'frobenius':
+                loss = -args.alpha_1 * avg_cossim + args.alpha_2 * avg_frobenius
 
             loss.backward()
 
@@ -360,21 +398,23 @@ def train_I_VNE(args):
 
             loss_list.append(loss.item())
             cossim_list.append(avg_cossim.item())
-            if args.reg_type == 'vne':
-                entropy_list.append(avg_entropy.item())
-            elif args.reg_type == 'geodesic':
-                geodesic_list.append(avg_geodesic.item())
+
 
         toc = time.time()
         print('Elapsed: {0:.1f}, Next: {1}, Finish: {2}'.format(toc-tic, (datetime.datetime.now() + datetime.timedelta(seconds=(toc-tic))).strftime("%Y%m%d %H:%M"),\
                                 (datetime.datetime.now() + datetime.timedelta(seconds=(toc-tic) * (args.epochs - epoch))).strftime("%Y%m%d %H:%M")))
         
-        print('Avg Proj: {0:.3f} / Avg Cossim: {1:.3f} / Avg Entropy: {2:.3f} / Avg Geodesic: {3:.3f}'.format(np.mean(proj_time_list), np.mean(cossim_time_list), np.mean(entropy_time_list), np.mean(geodesic_time_list)))
-        print('Avg Loss: {0:.3f} / Avg Cossim: {1:.3f} / Avg Entropy: {2:.3f} / Avg Geodesic: {3:.3f}'.format(np.mean(loss_list), np.mean(cossim_list), np.mean(entropy_list), np.mean(geodesic_list)))
+        print('Avg Proj: {0:.3f} / Avg Cossim: {1:.3f} / Avg Entropy: {2:.3f} / Avg Geodesic: {3:.3f} / Avg Frobenius: {4:.3f}'.format(np.mean(proj_time_list), np.mean(cossim_time_list), np.mean(entropy_time_list), np.mean(geodesic_time_list), np.mean(frobenius_time_list)))
+        print('Avg Loss: {0:.3f} / Avg Cossim: {1:.3f} / Avg Entropy: {2:.3f} / Avg Geodesic: {3:.3f} / Avg Frobenius: {4:.3f}'.format(np.mean(loss_list), np.mean(cossim_list), np.mean(entropy_list), np.mean(geodesic_list), np.mean(frobenius_list)))
         tic = toc
 
         torch.save({'epoch':epoch, 'model': model.module.state_dict(), 'projector': projector.module.state_dict(), 'optimizer_with_wd': optimizer_with_wd.state_dict(), 'optimizer_without_wd': optimizer_without_wd.state_dict(), 'args': args}, cache_file_name + '.tmp')
         os.rename(cache_file_name + '.tmp', cache_file_name)
+
+        wandb.log({'epoch': epoch, 'loss': np.mean(loss_list), 'cossim': np.mean(cossim_list), 'entropy': np.mean(entropy_list), 'geodesic': np.mean(geodesic_list), 'frobenius': np.mean(frobenius_list),
+                   'lr': optimizer_with_wd.state_dict()['param_groups'][0]['lr'], 'wd': args.weight_decay}, step=epoch)
+        wandb.log({'proj_time': np.mean(proj_time_list), 'cossim_time': np.mean(cossim_time_list), 'entropy_time': np.mean(entropy_time_list), 'geodesic_time': np.mean(geodesic_time_list), 'frobenius_time': np.mean(frobenius_time_list)}, step=epoch)
+        wandb.save(cache_file_name)
 
 
     print('\nDone.')
@@ -391,7 +431,7 @@ if __name__ == '__main__':
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_num
     torch.backends.cudnn.benchmark = True
-
+    wandb.init(project='GeoProejct', entity='beotborry', name=args.cache_name, config=args)
     train_I_VNE(args)
 
 
