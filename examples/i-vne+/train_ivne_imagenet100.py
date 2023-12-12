@@ -152,7 +152,7 @@ def get_geodesic_distance_crop(H, crop_val):
     Z = torch.nn.functional.normalize(H, dim=1)
     sing_val = torch.svd(Z / np.sqrt(Z.shape[0]))[1]
     eig_val = sing_val ** 2
-    return torch.sqrt((torch.log(eig_val[eig_val > crop_val] * (1/c)) ** 2).sum())
+    return torch.sqrt((torch.log(eig_val[eig_val > crop_val] * (1/c)) ** 2).sum()), torch.sqrt((torch.log(eig_val[eig_val > crop_val] * (1/1)) ** 2).sum())
 
 def train_I_VNE(args):
     print(args)
@@ -280,6 +280,7 @@ def train_I_VNE(args):
         cossim_list = []
         entropy_list = []
         geodesic_list = []
+        geodesic_c_1_list = []
         proj_time_list = []
         cossim_time_list = []
         entropy_time_list = []
@@ -324,11 +325,15 @@ def train_I_VNE(args):
             tic_geodesic = time.time()
 
             geodesic_sum = 0.
+            geodesic_c_1_sum = 0.
             geodesic_cnt = 0.
             for xii in range(args.extra_views+2):
-                geodesic_sum += get_geodesic_distance_crop(projections[args.batch_size*xii:args.batch_size*(xii+1)], args.crop_val)
+                geo, geo_c_1 = get_geodesic_distance_crop(projections[args.batch_size*xii:args.batch_size*(xii+1)], args.crop_val)
+                geodesic_sum += geo
+                geodesic_c_1_sum += geo_c_1                
                 geodesic_cnt += 1.
             avg_geodesic = geodesic_sum / geodesic_cnt
+            avg_geodesic_c_1 = geodesic_c_1_sum / geodesic_cnt
             # elif args.reg_type == 'geodesic':
             #     geodesic_sum = 0.
             #     geodesic_cnt = 0.
@@ -357,19 +362,20 @@ def train_I_VNE(args):
             cossim_list.append(avg_cossim.item())
             entropy_list.append(avg_entropy.item())
             geodesic_list.append(avg_geodesic.item())
+            geodesic_c_1_list.append(avg_geodesic_c_1.item())
 
         toc = time.time()
         print('Elapsed: {0:.1f}, Next: {1}, Finish: {2}'.format(toc-tic, (datetime.datetime.now() + datetime.timedelta(seconds=(toc-tic))).strftime("%Y%m%d %H:%M"),\
                                 (datetime.datetime.now() + datetime.timedelta(seconds=(toc-tic) * (args.epochs - epoch))).strftime("%Y%m%d %H:%M")))
         
         print('Avg Proj: {0:.3f} / Avg Cossim: {1:.3f} / Avg Entropy: {2:.3f} / Avg Geodesic: {3:.3f}'.format(np.mean(proj_time_list), np.mean(cossim_time_list), np.mean(entropy_time_list), np.mean(geodesic_time_list)))
-        print('Avg Loss: {0:.3f} / Avg Cossim: {1:.3f} / Avg Entropy: {2:.3f} / Avg Geodesic: {3:.3f}'.format(np.mean(loss_list), np.mean(cossim_list), np.mean(entropy_list), np.mean(geodesic_list)))
+        print('Avg Loss: {0:.3f} / Avg Cossim: {1:.3f} / Avg Entropy: {2:.3f} / Avg Geodesic: {3:.3f} / Avg Geodesic_c_1: {4:.3f}'.format(np.mean(loss_list), np.mean(cossim_list), np.mean(entropy_list), np.mean(geodesic_list), np.mean(geodesic_c_1_list)))
         tic = toc
 
         torch.save({'epoch':epoch, 'model': model.module.state_dict(), 'projector': projector.module.state_dict(), 'optimizer_with_wd': optimizer_with_wd.state_dict(), 'optimizer_without_wd': optimizer_without_wd.state_dict(), 'args': args}, cache_file_name + '.tmp')
         os.rename(cache_file_name + '.tmp', cache_file_name)
         
-        wandb.log({'epoch': epoch, 'loss': np.mean(loss_list), 'cossim': np.mean(cossim_list), 'entropy': np.mean(entropy_list), 'geodesic': np.mean(geodesic_list),
+        wandb.log({'epoch': epoch, 'loss': np.mean(loss_list), 'cossim': np.mean(cossim_list), 'entropy': np.mean(entropy_list), 'geodesic': np.mean(geodesic_list), 'geodesic_c_1': np.mean(geodesic_c_1_list),
                    'lr': optimizer_with_wd.state_dict()['param_groups'][0]['lr'], 'wd': args.weight_decay}, step=epoch)
         wandb.log({'proj_time': np.mean(proj_time_list), 'cossim_time': np.mean(cossim_time_list), 'entropy_time': np.mean(entropy_time_list), 'geodesic_time': np.mean(geodesic_time_list)}, step=epoch)
         wandb.save(cache_file_name)
