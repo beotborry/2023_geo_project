@@ -8,7 +8,9 @@ import os
 import argparse
 import glob
 import numpy as np
+import wandb
 from PIL import ImageOps, Image
+from utils import set_seed
 
 
 parser = argparse.ArgumentParser(description='I_VNE linear evaluation')
@@ -24,6 +26,10 @@ parser.add_argument('--datadir', default='./data/imagenet', type=str, metavar='D
 parser.add_argument('--cache_name', default='I_VNE_ImageNet_100', type=str, metavar='DIR', help='cache_name')
 parser.add_argument('--cache_path', default='./cache/', type=str, metavar='DIR', help='path to cache directory')
 parser.add_argument('--gpu_num', default='0', type=str, metavar='N', help='gpu_num')
+parser.add_argument('--reg_type', choices=['frobenius', 'vne', 'geodesic', 'geodesic_crop'], default='vne', type=str, help='reg_type')
+parser.add_argument('--seed', default=0, type=int, metavar='N', help='seed for initializing training. ')
+parser.add_argument('--alpha_2', default=1.0, type=float, metavar='N', help='alpha_2 for vne and geodesic')
+parser.add_argument('--crop_val', default=1e-4, type=float, metavar='N', help='crop_val for geodesic_crop')
 
 
 ##########
@@ -175,6 +181,7 @@ def lin_eval_I_VNE(args):
                                 (datetime.datetime.now() + datetime.timedelta(seconds=(toc-tic))).strftime("%Y%m%d %H:%M"),\
                                 (datetime.datetime.now() + datetime.timedelta(seconds=(toc-tic) * (args.epochs - epoch))).strftime("%Y%m%d %H:%M")))
         tic = toc
+        wandb.log({'epoch': epoch, 'best_acc1': best_acc1, 'best_acc5': best_acc5, 'elapsed': toc-tic})
 
 
     print('\nDone.')
@@ -213,7 +220,11 @@ if __name__ == '__main__':
     args.env_info = '{0}:{1}'.format(os.uname().nodename, args.gpu_num)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_num
-    torch.backends.cudnn.benchmark = True
+    # torch.backends.cudnn.benchmark = True
+    set_seed(args.seed)
+    name = f"{args.cache_name}_{args.reg_type}_alpha2_{args.alpha_2}_eval"
+
+    wandb.init(project='GeoProejct', entity='beotborry', name=name, config=args)
 
     lin_eval_I_VNE(args)
 

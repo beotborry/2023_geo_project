@@ -31,7 +31,8 @@ parser.add_argument('--alpha_2', default=1.00, type=float, metavar='COEF', help=
 parser.add_argument('--base_learning_rate', default=0.40, type=float, metavar='LR', help='base learning rate') # checked!
 parser.add_argument('--header_size', default=256, type=int, metavar='N', help='header_size')
 parser.add_argument('--extra_views', default=4, type=int, metavar='N', help='extra_views') # total_views = 2 + extra_views
-parser.add_argument('--reg_type', choices=['frobenius', 'vne', 'geodesic'], default='vne', type=str, help='reg_type')
+parser.add_argument('--reg_type', choices=['frobenius', 'vne', 'geodesic', 'geodesic_crop'], default='vne', type=str, help='reg_type')
+parser.add_argument("--crop_val", default=1e-4, type=float, help="crop_val")
 parser.add_argument('--seed', default=0, type=int, metavar='N', help='seed for initializing training. ')
 
 # Try not to stop and resume from checkpoint.
@@ -145,6 +146,13 @@ def get_geodesic_distance(H):
     sing_val = torch.svd(Z / np.sqrt(Z.shape[0]))[1]
     eig_val = sing_val ** 2
     return torch.sqrt((torch.log(eig_val) ** 2).sum())
+
+def get_geodesic_distance_crop(H, crop_val):
+    c = 1 / H.shape[0]
+    Z = torch.nn.functional.normalize(H, dim=1)
+    sing_val = torch.svd(Z / np.sqrt(Z.shape[0]))[1]
+    eig_val = sing_val ** 2
+    return torch.sqrt((torch.log(eig_val[eig_val > crop_val] * (1/c)) ** 2).sum())
 
 def train_I_VNE(args):
     print(args)
@@ -314,18 +322,26 @@ def train_I_VNE(args):
             entropy_time_list.append(toc_entropy - tic_entropy)
 
             tic_geodesic = time.time()
+
             geodesic_sum = 0.
             geodesic_cnt = 0.
             for xii in range(args.extra_views+2):
-                geodesic_sum += get_geodesic_distance(projections[args.batch_size*xii:args.batch_size*(xii+1)])
+                geodesic_sum += get_geodesic_distance_crop(projections[args.batch_size*xii:args.batch_size*(xii+1)], args.crop_val)
                 geodesic_cnt += 1.
             avg_geodesic = geodesic_sum / geodesic_cnt
+            # elif args.reg_type == 'geodesic':
+            #     geodesic_sum = 0.
+            #     geodesic_cnt = 0.
+            #     for xii in range(args.extra_views+2):
+            #         geodesic_sum += get_geodesic_distance(projections[args.batch_size*xii:args.batch_size*(xii+1)])
+            #         geodesic_cnt += 1.
+            #     avg_geodesic = geodesic_sum / geodesic_cnt
             toc_geodesic = time.time()
             geodesic_time_list.append(toc_geodesic - tic_geodesic)
 
             if args.reg_type == 'vne':
                 loss = -(args.alpha_1 * avg_cossim + args.alpha_2 * avg_entropy)
-            elif args.reg_type == 'geodesic':
+            elif args.reg_type == 'geodesic' or args.reg_type == 'geodesic_crop':
                 loss = -args.alpha_1 * avg_cossim + args.alpha_2 * avg_geodesic
 
             loss.backward()
@@ -374,7 +390,9 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_num
     # torch.backends.cudnn.benchmark = True
     set_seed(args.seed)
-    wandb.init(project='GeoProejct', entity='beotborry', name=args.cache_name, config=args)
+    name = f"{args.cache_name}_{args.reg_type}_alpha2_{args.alpha_2}_train"
+
+    wandb.init(project='GeoProejct', entity='beotborry', name=name, config=args)
     train_I_VNE(args)
 
 
